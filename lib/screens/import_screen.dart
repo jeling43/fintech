@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -56,12 +54,19 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
       _isImporting = true;
     });
 
-    final files = _selectedFiles.map((f) => File(f.path)).toList();
+    // Read bytes from each XFile using the cross-platform API so this works
+    // on Flutter Web (no dart:io File needed).
+    final inputs = await Future.wait(
+      _selectedFiles.map((xfile) async {
+        final bytes = await xfile.readAsBytes();
+        return PdfImportInput(bytes: bytes, filename: xfile.name);
+      }),
+    );
 
     if (mounted) {
       Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => ProcessingScreen(files: files),
+          builder: (_) => ProcessingScreen(files: inputs),
         ),
       );
     }

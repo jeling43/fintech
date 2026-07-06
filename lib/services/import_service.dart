@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:uuid/uuid.dart';
 
@@ -19,6 +20,22 @@ typedef ProgressCallback = void Function(ImportProgress progress);
 ///
 /// Increase this constant for extremely large or complex PDFs.
 const Duration kProcessingTimeout = Duration(seconds: 60);
+
+/// A web-safe container pairing PDF [bytes] with a display [filename].
+///
+/// Use this instead of `dart:io` [File] whenever the import pipeline is called
+/// from a context that must compile for Flutter Web (e.g. [ImportScreen] /
+/// [ProcessingScreen]).
+class PdfImportInput {
+  /// Raw bytes of the PDF document.
+  final Uint8List bytes;
+
+  /// Display name (e.g. `statement.pdf`) used for progress reporting and
+  /// metadata storage. Must not be empty.
+  final String filename;
+
+  const PdfImportInput({required this.bytes, required this.filename});
+}
 
 /// Represents the current progress of a PDF import operation.
 class ImportProgress {
@@ -72,19 +89,22 @@ class ImportService {
         _parserRegistry = parserRegistry,
         _database = database;
 
-  /// Import a single PDF file.
+  /// Import a single PDF from its raw [bytes] and [filename].
   ///
-  /// Returns the import ID if successful, or null if the file is a duplicate.
-  /// Reports progress through [onProgress] callback.
+  /// This is the primary, web-safe import entrypoint. It works on every
+  /// platform because it never touches `dart:io`.
   ///
-  /// The operation is bounded by [kProcessingTimeout]. On timeout an explicit
-  /// "Timed out" status is emitted and the import ID is returned so callers
-  /// can surface the error to the user.
-  Future<String?> importPdf(
-    File pdfFile, {
+  /// Returns the import ID if successful, or `null` if the file is a
+  /// duplicate. Reports progress through [onProgress].
+  ///
+  /// Every stage is bounded by [kProcessingTimeout]. On timeout an explicit
+  /// "Timed out" [ImportProgress] is emitted and the import ID is returned so
+  /// callers can surface a stable (non-null) result to the user.
+  Future<String?> importPdfFromBytes(
+    Uint8List bytes,
+    String filename, {
     ProgressCallback? onProgress,
   }) async {
-    final filename = pdfFile.uri.pathSegments.last;
     final importId = _uuid.v4();
 
     // --- Stage 1: Queued -------------------------------------------------------
@@ -105,8 +125,7 @@ class ImportService {
 
     final String hash;
     try {
-      hash = await _hashService
-          .computeFileHash(pdfFile)
+      hash = await Future(() => _hashService.computeHash(bytes))
           .timeout(kProcessingTimeout);
     } on TimeoutException {
       return _emitTimeout(
@@ -142,7 +161,8 @@ class ImportService {
         currentPage: 0,
         totalPages: 0,
         status: 'Duplicate detected',
-        error: 'This file has already been imported as "${existingImport.filename}".',
+        error:
+            'This file has already been imported as "${existingImport.filename}".',
       ));
       return null;
     }
@@ -160,8 +180,8 @@ class ImportService {
 
     try {
       pageTexts = await _pdfService
-          .extractText(
-            pdfFile,
+          .extractTextFromBytes(
+            bytes,
             onPage: (page, total) {
               onProgress?.call(ImportProgress(
                 filename: filename,
@@ -209,7 +229,7 @@ class ImportService {
         // specific rendering. The OCR call should be wrapped with
         // .timeout(kProcessingTimeout) when implemented:
         //
-        //   final imageBytes = await renderPdfPageToImage(pdfFile, entry.key);
+        //   final imageBytes = await renderPdfPageToImage(bytes, entry.key);
         //   pageTexts[entry.key] = await _ocrService
         //       .recognizeFromBytes(imageBytes)
         //       .timeout(kProcessingTimeout);
@@ -285,7 +305,27 @@ class ImportService {
     return importId;
   }
 
+  /// Import a single PDF file.
+  ///
+  /// Native-only convenience wrapper: reads the file bytes then delegates to
+  /// [importPdfFromBytes]. Do not call this on Flutter Web — use
+  /// [importPdfFromBytes] with bytes obtained from [XFile.readAsBytes()] or
+  /// similar web-safe APIs instead.
+  ///
+  /// Returns the import ID if successful, or `null` if the file is a
+  /// duplicate. Reports progress through [onProgress].
+  Future<String?> importPdf(
+    File pdfFile, {
+    ProgressCallback? onProgress,
+  }) async {
+    final filename = pdfFile.uri.pathSegments.last;
+    final bytes = await pdfFile.readAsBytes();
+    return importPdfFromBytes(bytes, filename, onProgress: onProgress);
+  }
+
   /// Import multiple PDF files.
+  ///
+  /// Native-only convenience wrapper. Do not call this on Flutter Web.
   Future<List<String>> importMultiplePdfs(
     List<File> files, {
     ProgressCallback? onProgress,
