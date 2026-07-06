@@ -3,6 +3,12 @@ import 'dart:typed_data';
 
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 
+/// Callback invoked after each page is extracted.
+///
+/// [page] is the 1-indexed page number just processed.
+/// [total] is the total page count of the document.
+typedef PageProgressCallback = void Function(int page, int total);
+
 /// Service for extracting text from PDF files.
 ///
 /// Uses the Syncfusion PDF library to extract embedded text from each page.
@@ -11,8 +17,15 @@ class PdfExtractionService {
   /// Extract text from all pages of a PDF file.
   ///
   /// Returns a map of page number (1-indexed) to extracted text.
-  /// If a page has no extractable text, it returns an empty string for that page.
-  Future<Map<int, String>> extractText(File pdfFile) async {
+  /// If a page has no extractable text, it returns an empty string for that
+  /// page.
+  ///
+  /// [onPage] is called after each page is processed so callers can emit
+  /// per-page progress updates.
+  Future<Map<int, String>> extractText(
+    File pdfFile, {
+    PageProgressCallback? onPage,
+  }) async {
     final Map<int, String> pageTexts = {};
 
     final Uint8List bytes = await pdfFile.readAsBytes();
@@ -23,8 +36,10 @@ class PdfExtractionService {
 
       for (int i = 0; i < pageCount; i++) {
         final PdfTextExtractor extractor = PdfTextExtractor(document);
-        final String text = extractor.extractText(startPageIndex: i, endPageIndex: i);
+        final String text =
+            extractor.extractText(startPageIndex: i, endPageIndex: i);
         pageTexts[i + 1] = text; // 1-indexed page numbers
+        onPage?.call(i + 1, pageCount);
       }
     } finally {
       document.dispose();
