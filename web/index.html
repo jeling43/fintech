@@ -17,6 +17,13 @@
   <link rel="manifest" href="manifest.json">
 
   <!-- sql.js is required by drift for web database support -->
+  <script>
+    var Module = {
+      locateFile: function(file) {
+        return 'https://cdn.jsdelivr.net/npm/sql.js@1.8.0/dist/' + file;
+      }
+    };
+  </script>
   <script defer src="https://cdn.jsdelivr.net/npm/sql.js@1.8.0/dist/sql-wasm.js"></script>
 </head>
 <body>
