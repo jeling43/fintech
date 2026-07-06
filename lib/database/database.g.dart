@@ -814,6 +814,34 @@ class FinancialRecordsTableData extends DataClass
     );
   }
 
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'transactionDate': serializer.toJson<String?>(transactionDate),
+      'postingDate': serializer.toJson<String?>(postingDate),
+      'description': serializer.toJson<String?>(description),
+      'merchantOrRecipient': serializer.toJson<String?>(merchantOrRecipient),
+      'debit': serializer.toJson<double?>(debit),
+      'credit': serializer.toJson<double?>(credit),
+      'amount': serializer.toJson<double?>(amount),
+      'balance': serializer.toJson<double?>(balance),
+      'checkNumber': serializer.toJson<String?>(checkNumber),
+      'referenceNumber': serializer.toJson<String?>(referenceNumber),
+      'institution': serializer.toJson<String?>(institution),
+      'accountHolder': serializer.toJson<String?>(accountHolder),
+      'maskedAccountNumber': serializer.toJson<String?>(maskedAccountNumber),
+      'sourcePdf': serializer.toJson<String>(sourcePdf),
+      'sourcePage': serializer.toJson<int>(sourcePage),
+      'originalText': serializer.toJson<String>(originalText),
+      'reviewed': serializer.toJson<bool>(reviewed),
+      'manuallyEdited': serializer.toJson<bool>(manuallyEdited),
+      'importId': serializer.toJson<String>(importId),
+      'isUncertain': serializer.toJson<bool>(isUncertain),
+    };
+  }
+
   FinancialRecordsTableData copyWith(
       {String? id,
       Value<String?> transactionDate = const Value.absent(),
@@ -1045,8 +1073,8 @@ class FinancialRecordsTableCompanion
 }
 
 // Database class implementation
-class _$AppDatabase extends AppDatabase {
-  _$AppDatabase(QueryExecutor e) : super.forTesting(e);
+abstract class _$AppDatabase extends GeneratedDatabase {
+  _$AppDatabase(QueryExecutor e) : super(e);
 
   late final $ImportMetadataTableTable importMetadataTable =
       $ImportMetadataTableTable(this);
