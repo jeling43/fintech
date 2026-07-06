@@ -1,0 +1,63 @@
+name: fintech_investigator
+description: >
+  A Flutter application that imports bank and financial record PDFs and converts
+  the information into a more usable format for investigation review.
+
+publish_to: "none"
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.2.0 <4.0.0"
+  flutter: ">=3.16.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  material_color_utilities: ^0.11.1
+
+  # State management
+  flutter_riverpod: ^2.4.9
+  riverpod_annotation: ^2.3.3
+
+  # Database
+  drift: ^2.14.1
+  sqlite3_flutter_libs: ^0.5.18
+  path_provider: ^2.1.2
+
+  # File selection
+  file_selector: ^1.0.3
+
+  # PDF text extraction
+  syncfusion_flutter_pdf: ^24.1.41
+
+  # OCR
+  google_mlkit_text_recognition: ^0.11.0
+
+  # CSV export
+  csv: ^6.0.0
+
+  # Hashing
+  crypto: ^3.0.3
+
+  # Sharing/saving exports
+  share_plus: ^7.2.1
+
+  # Date formatting
+  intl: ^0.19.0
+
+  # UUID generation
+  uuid: ^4.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+  drift_dev: ^2.14.1
+  build_runner: ^2.4.7
+  riverpod_generator: ^2.3.9
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
