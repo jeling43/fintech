@@ -1,19 +1,16 @@
-import 'dart:io';
-
 import 'package:drift/drift.dart';
-import 'package:drift/native.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 
 import '../models/financial_record.dart';
 import '../models/import_metadata.dart';
+import 'connection/native.dart'
+    if (dart.library.html) 'connection/web.dart';
 import 'tables.dart';
 
 part 'database.g.dart';
 
 @DriftDatabase(tables: [ImportMetadataTable, FinancialRecordsTable])
 class AppDatabase extends _$AppDatabase {
-  AppDatabase() : super(_openConnection());
+  AppDatabase() : super(openDatabaseConnection());
 
   AppDatabase.forTesting(super.e);
 
@@ -164,12 +161,4 @@ class AppDatabase extends _$AppDatabase {
   Stream<List<FinancialRecordsTableData>> watchAllRecords() {
     return select(financialRecordsTable).watch();
   }
-}
-
-LazyDatabase _openConnection() {
-  return LazyDatabase(() async {
-    final dbFolder = await getApplicationDocumentsDirectory();
-    final file = File(p.join(dbFolder.path, 'fintech_investigator.sqlite'));
-    return NativeDatabase.createInBackground(file);
-  });
 }
