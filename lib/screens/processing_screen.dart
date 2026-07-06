@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -12,8 +10,11 @@ import 'review_screen.dart';
 /// Displays which file and page are being processed and reports errors.
 /// When processing times out the screen shows a clear "Timed out" message
 /// so the user is never left wondering what happened.
+///
+/// Accepts [List<PdfImportInput>] so that it works on Flutter Web without
+/// touching `dart:io`.
 class ProcessingScreen extends ConsumerStatefulWidget {
-  final List<File> files;
+  final List<PdfImportInput> files;
 
   const ProcessingScreen({super.key, required this.files});
 
@@ -37,9 +38,10 @@ class _ProcessingScreenState extends ConsumerState<ProcessingScreen> {
   Future<void> _startProcessing() async {
     final importService = ref.read(importServiceProvider);
 
-    for (final file in widget.files) {
-      final importId = await importService.importPdf(
-        file,
+    for (final input in widget.files) {
+      final importId = await importService.importPdfFromBytes(
+        input.bytes,
+        input.filename,
         onProgress: (progress) {
           if (mounted) {
             setState(() {

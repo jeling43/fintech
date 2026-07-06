@@ -14,21 +14,21 @@ typedef PageProgressCallback = void Function(int page, int total);
 /// Uses the Syncfusion PDF library to extract embedded text from each page.
 /// Returns text per page for accurate source tracking.
 class PdfExtractionService {
-  /// Extract text from all pages of a PDF file.
+  /// Extract text from all pages of a PDF given its raw [bytes].
   ///
-  /// Returns a map of page number (1-indexed) to extracted text.
-  /// If a page has no extractable text, it returns an empty string for that
-  /// page.
+  /// This is the primary, web-safe extraction method. It works on every
+  /// platform because it never touches `dart:io`.
+  ///
+  /// Returns a map of page number (1-indexed) to extracted text. If a page
+  /// has no extractable text it returns an empty string for that page.
   ///
   /// [onPage] is called after each page is processed so callers can emit
   /// per-page progress updates.
-  Future<Map<int, String>> extractText(
-    File pdfFile, {
+  Future<Map<int, String>> extractTextFromBytes(
+    Uint8List bytes, {
     PageProgressCallback? onPage,
   }) async {
     final Map<int, String> pageTexts = {};
-
-    final Uint8List bytes = await pdfFile.readAsBytes();
     final PdfDocument document = PdfDocument(inputBytes: bytes);
 
     try {
@@ -48,18 +48,41 @@ class PdfExtractionService {
     return pageTexts;
   }
 
-  /// Get the page count of a PDF file.
-  Future<int> getPageCount(File pdfFile) async {
+  /// Extract text from all pages of a PDF [File].
+  ///
+  /// Native-only convenience wrapper: reads the file bytes then delegates to
+  /// [extractTextFromBytes]. Do not call this on Flutter Web.
+  Future<Map<int, String>> extractText(
+    File pdfFile, {
+    PageProgressCallback? onPage,
+  }) async {
     final Uint8List bytes = await pdfFile.readAsBytes();
+    return extractTextFromBytes(bytes, onPage: onPage);
+  }
+
+  /// Get the page count of a PDF given its raw [bytes].
+  ///
+  /// Web-safe variant of [getPageCount].
+  Future<int> getPageCountFromBytes(Uint8List bytes) async {
     final PdfDocument document = PdfDocument(inputBytes: bytes);
     final int count = document.pages.count;
     document.dispose();
     return count;
   }
 
-  /// Check if a page has extractable text (not a scanned image).
-  Future<bool> hasExtractableText(File pdfFile, int pageIndex) async {
+  /// Get the page count of a PDF [File].
+  ///
+  /// Native-only convenience wrapper. Do not call this on Flutter Web.
+  Future<int> getPageCount(File pdfFile) async {
     final Uint8List bytes = await pdfFile.readAsBytes();
+    return getPageCountFromBytes(bytes);
+  }
+
+  /// Check if a page has extractable text (not a scanned image) from [bytes].
+  ///
+  /// Web-safe variant of [hasExtractableText].
+  Future<bool> hasExtractableTextFromBytes(
+      Uint8List bytes, int pageIndex) async {
     final PdfDocument document = PdfDocument(inputBytes: bytes);
 
     try {
@@ -70,5 +93,13 @@ class PdfExtractionService {
     } finally {
       document.dispose();
     }
+  }
+
+  /// Check if a page has extractable text (not a scanned image).
+  ///
+  /// Native-only convenience wrapper. Do not call this on Flutter Web.
+  Future<bool> hasExtractableText(File pdfFile, int pageIndex) async {
+    final Uint8List bytes = await pdfFile.readAsBytes();
+    return hasExtractableTextFromBytes(bytes, pageIndex);
   }
 }
