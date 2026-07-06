@@ -10,6 +10,8 @@ import 'review_screen.dart';
 /// Screen showing extraction progress during PDF import.
 ///
 /// Displays which file and page are being processed and reports errors.
+/// When processing times out the screen shows a clear "Timed out" message
+/// so the user is never left wondering what happened.
 class ProcessingScreen extends ConsumerStatefulWidget {
   final List<File> files;
 
@@ -23,6 +25,7 @@ class _ProcessingScreenState extends ConsumerState<ProcessingScreen> {
   final List<ImportProgress> _progressHistory = [];
   bool _isComplete = false;
   bool _hasErrors = false;
+  bool _hasTimeout = false;
   final List<String> _importIds = [];
 
   @override
@@ -44,6 +47,9 @@ class _ProcessingScreenState extends ConsumerState<ProcessingScreen> {
               if (progress.error != null) {
                 _hasErrors = true;
               }
+              if (progress.isTimedOut) {
+                _hasTimeout = true;
+              }
             });
           }
         },
@@ -63,6 +69,30 @@ class _ProcessingScreenState extends ConsumerState<ProcessingScreen> {
 
   ImportProgress? get _currentProgress =>
       _progressHistory.isNotEmpty ? _progressHistory.last : null;
+
+  /// Returns the icon to show for the current overall state.
+  IconData get _statusIcon {
+    if (!_isComplete) return Icons.hourglass_top;
+    if (_hasTimeout) return Icons.timer_off;
+    if (_hasErrors) return Icons.warning_amber;
+    return Icons.check_circle;
+  }
+
+  /// Returns the color to use for the current overall state.
+  Color _statusColor(BuildContext context) {
+    if (!_isComplete) return Theme.of(context).colorScheme.primary;
+    if (_hasTimeout) return Colors.orange;
+    if (_hasErrors) return Colors.orange;
+    return Colors.green;
+  }
+
+  /// Returns a human-readable title for the current overall state.
+  String get _statusTitle {
+    if (!_isComplete) return 'Processing…';
+    if (_hasTimeout) return 'Processing Timed Out';
+    if (_hasErrors) return 'Processing Complete (with errors)';
+    return 'Processing Complete';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -84,7 +114,7 @@ class _ProcessingScreenState extends ConsumerState<ProcessingScreen> {
               const SizedBox(height: 24),
             ],
 
-            // Current status
+            // Current status card
             if (progress != null) ...[
               Card(
                 child: Padding(
@@ -95,19 +125,13 @@ class _ProcessingScreenState extends ConsumerState<ProcessingScreen> {
                       Row(
                         children: [
                           Icon(
-                            _isComplete
-                                ? (_hasErrors
-                                    ? Icons.warning_amber
-                                    : Icons.check_circle)
-                                : Icons.hourglass_top,
-                            color: _isComplete
-                                ? (_hasErrors ? Colors.orange : Colors.green)
-                                : Theme.of(context).colorScheme.primary,
+                            _statusIcon,
+                            color: _statusColor(context),
                           ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              _isComplete ? 'Processing Complete' : 'Processing...',
+                              _statusTitle,
                               style: Theme.of(context).textTheme.titleMedium,
                             ),
                           ),
@@ -123,6 +147,18 @@ class _ProcessingScreenState extends ConsumerState<ProcessingScreen> {
                         const SizedBox(height: 8),
                         LinearProgressIndicator(
                           value: progress.percentage,
+                        ),
+                      ],
+                      if (progress.error != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          progress.error!,
+                          style: TextStyle(
+                            color: progress.isTimedOut
+                                ? Colors.orange
+                                : Colors.red,
+                            fontSize: 13,
+                          ),
                         ),
                       ],
                     ],
@@ -142,17 +178,30 @@ class _ProcessingScreenState extends ConsumerState<ProcessingScreen> {
                   itemBuilder: (context, index) {
                     final item = _progressHistory[index];
                     final isError = item.error != null;
+                    final isTimeout = item.isTimedOut;
                     return ListTile(
                       dense: true,
                       leading: Icon(
-                        isError ? Icons.error_outline : Icons.check,
-                        color: isError ? Colors.red : Colors.green,
+                        isTimeout
+                            ? Icons.timer_off
+                            : isError
+                                ? Icons.error_outline
+                                : Icons.check,
+                        color: isTimeout
+                            ? Colors.orange
+                            : isError
+                                ? Colors.red
+                                : Colors.green,
                         size: 20,
                       ),
                       title: Text(
                         item.status,
                         style: TextStyle(
-                          color: isError ? Colors.red : null,
+                          color: isTimeout
+                              ? Colors.orange
+                              : isError
+                                  ? Colors.red
+                                  : null,
                           fontSize: 13,
                         ),
                       ),
@@ -167,6 +216,20 @@ class _ProcessingScreenState extends ConsumerState<ProcessingScreen> {
 
             // Action buttons
             if (_isComplete) ...[
+              if (_hasTimeout) ...[
+                Text(
+                  'The operation timed out after '
+                  '${kProcessingTimeout.inSeconds} seconds. '
+                  'You can try again with a smaller file, or check that the '
+                  'PDF is not password-protected or corrupt.',
+                  style: TextStyle(
+                    color: Colors.orange.shade700,
+                    fontSize: 13,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+              ],
               Row(
                 children: [
                   Expanded(

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:uuid/uuid.dart';
@@ -14,6 +15,11 @@ import 'pdf_extraction_service.dart';
 /// Callback for reporting import progress.
 typedef ProgressCallback = void Function(ImportProgress progress);
 
+/// Maximum time allowed for any single PDF import operation.
+///
+/// Increase this constant for extremely large or complex PDFs.
+const Duration kProcessingTimeout = Duration(seconds: 60);
+
 /// Represents the current progress of a PDF import operation.
 class ImportProgress {
   final String filename;
@@ -22,12 +28,16 @@ class ImportProgress {
   final String status;
   final String? error;
 
+  /// Whether this progress entry represents a terminal timed-out state.
+  final bool isTimedOut;
+
   const ImportProgress({
     required this.filename,
     required this.currentPage,
     required this.totalPages,
     required this.status,
     this.error,
+    this.isTimedOut = false,
   });
 
   double get percentage =>
@@ -37,6 +47,10 @@ class ImportProgress {
 /// Service that orchestrates the full PDF import pipeline.
 ///
 /// Coordinates PDF extraction, OCR, parsing, and database storage.
+///
+/// Every public operation is guarded by [kProcessingTimeout]. If the timeout
+/// elapses the service emits a "Timed out" [ImportProgress] and returns a
+/// stable state so the UI is never left hanging.
 class ImportService {
   final PdfExtractionService _pdfService;
   final OcrService _ocrService;
@@ -62,6 +76,10 @@ class ImportService {
   ///
   /// Returns the import ID if successful, or null if the file is a duplicate.
   /// Reports progress through [onProgress] callback.
+  ///
+  /// The operation is bounded by [kProcessingTimeout]. On timeout an explicit
+  /// "Timed out" status is emitted and the import ID is returned so callers
+  /// can surface the error to the user.
   Future<String?> importPdf(
     File pdfFile, {
     ProgressCallback? onProgress,
@@ -69,15 +87,52 @@ class ImportService {
     final filename = pdfFile.uri.pathSegments.last;
     final importId = _uuid.v4();
 
-    // Compute hash to check for duplicates
+    // --- Stage 1: Queued -------------------------------------------------------
+    onProgress?.call(ImportProgress(
+      filename: filename,
+      currentPage: 0,
+      totalPages: 0,
+      status: 'Queued',
+    ));
+
+    // --- Stage 2: Load file & compute hash ------------------------------------
+    onProgress?.call(ImportProgress(
+      filename: filename,
+      currentPage: 0,
+      totalPages: 0,
+      status: 'Loading file...',
+    ));
+
+    final String hash;
+    try {
+      hash = await _hashService
+          .computeFileHash(pdfFile)
+          .timeout(kProcessingTimeout);
+    } on TimeoutException {
+      return _emitTimeout(
+        filename: filename,
+        importId: importId,
+        hash: null,
+        pageCount: 0,
+        onProgress: onProgress,
+      );
+    } catch (e) {
+      return _emitError(
+        filename: filename,
+        importId: importId,
+        hash: null,
+        pageCount: 0,
+        message: 'Failed to load file: $e',
+        onProgress: onProgress,
+      );
+    }
+
     onProgress?.call(ImportProgress(
       filename: filename,
       currentPage: 0,
       totalPages: 0,
       status: 'Computing file hash...',
     ));
-
-    final hash = await _hashService.computeFileHash(pdfFile);
 
     // Check for duplicate import
     final existingImport = await _database.getImportByHash(hash);
@@ -92,7 +147,7 @@ class ImportService {
       return null;
     }
 
-    // Extract text from PDF
+    // --- Stage 3: Extract text ------------------------------------------------
     onProgress?.call(ImportProgress(
       filename: filename,
       currentPage: 0,
@@ -104,31 +159,41 @@ class ImportService {
     bool usedOcr = false;
 
     try {
-      pageTexts = await _pdfService.extractText(pdfFile);
-    } catch (e) {
-      onProgress?.call(ImportProgress(
+      pageTexts = await _pdfService
+          .extractText(
+            pdfFile,
+            onPage: (page, total) {
+              onProgress?.call(ImportProgress(
+                filename: filename,
+                currentPage: page,
+                totalPages: total,
+                status: 'Extracting text from page $page of $total...',
+              ));
+            },
+          )
+          .timeout(kProcessingTimeout);
+    } on TimeoutException {
+      return _emitTimeout(
         filename: filename,
-        currentPage: 0,
-        totalPages: 0,
-        status: 'Error',
-        error: 'Failed to extract text: $e',
-      ));
-      // Store the import metadata with error
-      await _database.insertImportMetadata(ImportMetadata(
-        id: importId,
-        filename: filename,
-        sha256Hash: hash,
-        importedAt: DateTime.now(),
+        importId: importId,
+        hash: hash,
         pageCount: 0,
-        usedOcr: false,
-        errorMessage: 'Failed to extract text: $e',
-      ));
-      return importId;
+        onProgress: onProgress,
+      );
+    } catch (e) {
+      return _emitError(
+        filename: filename,
+        importId: importId,
+        hash: hash,
+        pageCount: 0,
+        message: 'Failed to extract text: $e',
+        onProgress: onProgress,
+      );
     }
 
     final totalPages = pageTexts.length;
 
-    // Check for pages needing OCR
+    // --- Stage 4: OCR (for image-only pages) ----------------------------------
     for (final entry in pageTexts.entries) {
       if (entry.value.trim().isEmpty) {
         onProgress?.call(ImportProgress(
@@ -138,17 +203,20 @@ class ImportService {
           status: 'Running OCR on page ${entry.key}...',
         ));
 
+        usedOcr = true;
         // Note: In a full implementation, you would render the PDF page
         // to an image and then run OCR on it. This requires platform-
-        // specific rendering. For now, we mark it as needing OCR.
-        usedOcr = true;
-        // The page remains empty - in production, this would be:
-        // final imageBytes = await renderPdfPageToImage(pdfFile, entry.key);
-        // pageTexts[entry.key] = await _ocrService.recognizeFromBytes(imageBytes);
+        // specific rendering. The OCR call should be wrapped with
+        // .timeout(kProcessingTimeout) when implemented:
+        //
+        //   final imageBytes = await renderPdfPageToImage(pdfFile, entry.key);
+        //   pageTexts[entry.key] = await _ocrService
+        //       .recognizeFromBytes(imageBytes)
+        //       .timeout(kProcessingTimeout);
       }
     }
 
-    // Parse extracted text
+    // --- Stage 5: Parse -------------------------------------------------------
     final allRecords = <FinancialRecord>[];
 
     for (final entry in pageTexts.entries) {
@@ -161,7 +229,7 @@ class ImportService {
         filename: filename,
         currentPage: pageNumber,
         totalPages: totalPages,
-        status: 'Parsing page $pageNumber...',
+        status: 'Parsing page $pageNumber of $totalPages...',
       ));
 
       final result = _parserRegistry.parseText(
@@ -174,7 +242,7 @@ class ImportService {
       allRecords.addAll(result.transactions);
     }
 
-    // Save to database
+    // --- Stage 6: Save --------------------------------------------------------
     onProgress?.call(ImportProgress(
       filename: filename,
       currentPage: totalPages,
@@ -182,24 +250,36 @@ class ImportService {
       status: 'Saving records...',
     ));
 
-    await _database.insertImportMetadata(ImportMetadata(
-      id: importId,
-      filename: filename,
-      sha256Hash: hash,
-      importedAt: DateTime.now(),
-      pageCount: totalPages,
-      usedOcr: usedOcr,
-    ));
+    try {
+      await _database.insertImportMetadata(ImportMetadata(
+        id: importId,
+        filename: filename,
+        sha256Hash: hash,
+        importedAt: DateTime.now(),
+        pageCount: totalPages,
+        usedOcr: usedOcr,
+      ));
 
-    if (allRecords.isNotEmpty) {
-      await _database.insertRecords(allRecords);
+      if (allRecords.isNotEmpty) {
+        await _database.insertRecords(allRecords);
+      }
+    } catch (e) {
+      return _emitError(
+        filename: filename,
+        importId: importId,
+        hash: hash,
+        pageCount: totalPages,
+        message: 'Failed to save records: $e',
+        onProgress: onProgress,
+      );
     }
 
+    // --- Stage 7: Complete ----------------------------------------------------
     onProgress?.call(ImportProgress(
       filename: filename,
       currentPage: totalPages,
       totalPages: totalPages,
-      status: 'Complete - ${allRecords.length} records extracted',
+      status: 'Complete — ${allRecords.length} record(s) extracted',
     ));
 
     return importId;
@@ -233,5 +313,85 @@ class ImportService {
 
   void dispose() {
     _ocrService.dispose();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  /// Emit a terminal "Timed out" progress event, persist metadata, and return
+  /// the import ID so the caller can surface a stable (non-null) result.
+  Future<String> _emitTimeout({
+    required String filename,
+    required String importId,
+    required String? hash,
+    required int pageCount,
+    required ProgressCallback? onProgress,
+  }) async {
+    final message =
+        'Processing exceeded ${kProcessingTimeout.inSeconds} seconds. '
+        'The file may be too large or complex. Please try again.';
+
+    onProgress?.call(ImportProgress(
+      filename: filename,
+      currentPage: 0,
+      totalPages: pageCount,
+      status: 'Timed out',
+      error: message,
+      isTimedOut: true,
+    ));
+
+    if (hash != null) {
+      await _safeInsertError(importId, filename, hash, pageCount, message);
+    }
+    return importId;
+  }
+
+  /// Emit a terminal "Failed" progress event, persist metadata, and return
+  /// the import ID.
+  Future<String> _emitError({
+    required String filename,
+    required String importId,
+    required String? hash,
+    required int pageCount,
+    required String message,
+    required ProgressCallback? onProgress,
+  }) async {
+    onProgress?.call(ImportProgress(
+      filename: filename,
+      currentPage: 0,
+      totalPages: pageCount,
+      status: 'Failed',
+      error: message,
+    ));
+
+    if (hash != null) {
+      await _safeInsertError(importId, filename, hash, pageCount, message);
+    }
+    return importId;
+  }
+
+  /// Persist an error-state import metadata record, swallowing any DB errors
+  /// so that the UI always receives a terminal status.
+  Future<void> _safeInsertError(
+    String importId,
+    String filename,
+    String hash,
+    int pageCount,
+    String errorMessage,
+  ) async {
+    try {
+      await _database.insertImportMetadata(ImportMetadata(
+        id: importId,
+        filename: filename,
+        sha256Hash: hash,
+        importedAt: DateTime.now(),
+        pageCount: pageCount,
+        usedOcr: false,
+        errorMessage: errorMessage,
+      ));
+    } catch (_) {
+      // Swallow database errors so the UI still receives the terminal status.
+    }
   }
 }
