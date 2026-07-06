@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:csv/csv.dart';
@@ -78,7 +79,7 @@ class CsvExportService {
     final exportFilename =
         filename ?? 'financial_records_${DateTime.now().millisecondsSinceEpoch}.csv';
     final file = File(p.join(directory.path, exportFilename));
-    await file.writeAsString(csvString, encoding: const Utf8Codec());
+    await file.writeAsString(csvString, encoding: utf8);
     return file.path;
   }
 
